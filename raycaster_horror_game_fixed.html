@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Labyrinth Stalker - Raycaster Horror</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: #000;
+            overflow: hidden;
+            font-family: 'Courier New', monospace;
+            cursor: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        
+        #gameCanvas {
+            display: block;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+            max-width: 100%;
+            max-height: 100vh;
+            border: 2px solid #222;
+        }
+        
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #ff0000;
+            font-size: 18px;
+            text-shadow: 2px 2px 4px #000;
+            user-select: none;
+            font-weight: bold;
+        }
+        
+        #crosshair {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 100, 100, 0.6);
+            pointer-events: none;
+        }
+        
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #888;
+            font-size: 14px;
+            user-select: none;
+        }
+        
+        #gameOver {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #ff0000;
+            font-size: 48px;
+            text-shadow: 4px 4px 8px #000;
+            display: none;
+            text-align: center;
+            font-weight: bold;
+        }
+        
+        #gameOver .subtitle {
+            font-size: 24px;
+            margin-top: 20px;
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div id="hud">
+        <div>DANGER: <span id="danger">LOW</span></div>
+        <div style="font-size: 14px; margin-top: 5px;">Distance: <span id="distance">--</span>m</div>
+    </div>
+    <div id="crosshair"></div>
+    <div id="instructions">
+        WASD/Arrows: Move | Mouse: Look | Click: Lock Pointer | Survive...
+    </div>
+    <div id="gameOver">
+        THE STALKER GOT YOU
+        <div class="subtitle">Press F5 to try again</div>
+    </div>
+
+    <script>
+        // ========================================
+        // GAME CONFIGURATION
+        // ========================================
+        
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Set canvas resolution
+        const SCREEN_WIDTH = 800;
+        const SCREEN_HEIGHT = 600;
+        canvas.width = SCREEN_WIDTH;
+        canvas.height = SCREEN_HEIGHT;
+        
+        // Raycasting parameters
+        const FOV = Math.PI / 3; // 60 degree field of view
+        const NUM_RAYS = 320; // Number of rays to cast
+        const MAX_DEPTH = 16;
+        const STRIP_WIDTH = SCREEN_WIDTH / NUM_RAYS;
+        
+        // Game state
+        let gameRunning = true;
+        
+        // ========================================
+        // MAP DEFINITION
+        // ========================================
+        
+        const map = [
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+            [1,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,1],
+            [1,0,1,1,0,1,1,1,0,0,0,0,1,1,1,0,1,1,0,1],
+            [1,0,1,0,0,0,0,1,0,1,1,0,1,0,0,0,0,1,0,1],
+            [1,0,0,0,1,1,0,0,0,0,0,0,0,0,1,1,0,0,0,1],
+            [1,0,1,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1,0,1],
+            [1,0,1,1,1,0,1,1,0,0,0,0,1,1,0,1,1,1,0,1],
+            [1,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,1],
+            [1,1,0,1,1,1,0,1,0,0,0,0,1,0,1,1,1,0,1,1],
+            [1,0,0,0,0,0,0,1,1,0,0,1,1,0,0,0,0,0,0,1],
+            [1,0,1,1,0,1,0,0,0,0,0,0,0,0,1,0,1,1,0,1],
+            [1,0,0,1,0,1,1,1,0,1,1,0,1,1,1,0,1,0,0,1],
+            [1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],
+            [1,0,0,1,1,0,1,1,1,0,0,1,1,1,0,1,1,0,0,1],
+            [1,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1],
+            [1,0,0,0,0,1,1,0,1,1,1,1,0,1,1,0,0,0,0,1],
+            [1,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1],
+            [1,0,0,1,1,1,0,1,0,1,1,0,1,0,1,1,1,0,0,1],
+            [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+            [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]
+        ];
+        
+        const MAP_WIDTH = map[0].length;
+        const MAP_HEIGHT = map.length;
+        const TILE_SIZE = 64; // Size of each tile in world units
+        
+        // ========================================
+        // TEXTURE GENERATION
+        // ========================================
+        
+        function createWallTexture() {
+            const textureCanvas = document.createElement('canvas');
+            const textureCtx = textureCanvas.getContext('2d');
+            textureCanvas.width = 64;
+            textureCanvas.height = 64;
+            
+            // Base stone color
+            textureCtx.fillStyle = '#3a3a3a';
+            textureCtx.fillRect(0, 0, 64, 64);
+            
+            // Draw stone blocks
+            for (let y = 0; y < 4; y++) {
+                for (let x = 0; x < 4; x++) {
+                    const blockX = x * 16;
+                    const blockY = y * 16;
+                    
+                    // Stone variation
+                    const brightness = 40 + Math.random() * 30;
+                    textureCtx.fillStyle = `rgb(${brightness}, ${brightness * 0.9}, ${brightness * 0.85})`;
+                    textureCtx.fillRect(blockX + 1, blockY + 1, 14, 14);
+                    
+                    // Add texture noise
+                    for (let i = 0; i < 5; i++) {
+                        const nx = blockX + 1 + Math.random() * 14;
+                        const ny = blockY + 1 + Math.random() * 14;
+                        const nr = Math.random() * 3;
+                        const darkness = brightness * (0.7 + Math.random() * 0.3);
+                        textureCtx.fillStyle = `rgba(${darkness}, ${darkness * 0.9}, ${darkness * 0.85}, 0.5)`;
+                        textureCtx.beginPath();
+                        textureCtx.arc(nx, ny, nr, 0, Math.PI * 2);
+                        textureCtx.fill();
+                    }
+                }
+            }
+            
+            // Mortar lines (dark gaps)
+            textureCtx.strokeStyle = '#1a1a1a';
+            textureCtx.lineWidth = 2;
+            for (let i = 0; i < 4; i++) {
+                // Horizontal lines
+                textureCtx.beginPath();
+                textureCtx.moveTo(0, i * 16);
+                textureCtx.lineTo(64, i * 16);
+                textureCtx.stroke();
+                // Vertical lines
+                textureCtx.beginPath();
+                textureCtx.moveTo(i * 16, 0);
+                textureCtx.lineTo(i * 16, 64);
+                textureCtx.stroke();
+            }
+            
+            // Add moss/decay
+            textureCtx.globalAlpha = 0.3;
+            for (let i = 0; i < 8; i++) {
+                const x = Math.random() * 64;
+                const y = Math.random() * 64;
+                const size = 5 + Math.random() * 10;
+                const gradient = textureCtx.createRadialGradient(x, y, 0, x, y, size);
+                gradient.addColorStop(0, 'rgba(20, 40, 20, 0.8)');
+                gradient.addColorStop(1, 'rgba(20, 40, 20, 0)');
+                textureCtx.fillStyle = gradient;
+                textureCtx.fillRect(x - size, y - size, size * 2, size * 2);
+            }
+            textureCtx.globalAlpha = 1;
+            
+            return textureCanvas;
+        }
+        
+        const wallTexture = createWallTexture();
+        
+        // ========================================
+        // PLAYER
+        // ========================================
+        
+        const player = {
+            x: 1.5,
+            y: 1.5,
+            angle: 0,
+            moveSpeed: 0.05,
+            rotSpeed: 0.03,
+            radius: 0.2 // For collision
+        };
+        
+        // ========================================
+        // STALKER ENEMY
+        // ========================================
+        
+        const stalker = {
+            x: 18.5,
+            y: 18.5,
+            speed: 0.015,
+            eyeGlow: 0,
+            glowDir: 1,
+            lastSeen: false
+        };
+        
+        // Create stalker sprite
+        function createStalkerSprite() {
+            const spriteCanvas = document.createElement('canvas');
+            const ctx = spriteCanvas.getContext('2d');
+            spriteCanvas.width = 64;
+            spriteCanvas.height = 128;
+            
+            // Body (dark silhouette)
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            // Torso
+            ctx.ellipse(32, 80, 25, 40, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Head
+            ctx.beginPath();
+            ctx.ellipse(32, 35, 20, 25, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Arms (elongated)
+            ctx.fillRect(5, 60, 8, 50);
+            ctx.fillRect(51, 60, 8, 50);
+            
+            return spriteCanvas;
+        }
+        
+        const stalkerSprite = createStalkerSprite();
+        
+        // ========================================
+        // INPUT HANDLING
+        // ========================================
+        
+        const keys = {};
+        
+        document.addEventListener('keydown', e => {
+            keys[e.key.toLowerCase()] = true;
+            e.preventDefault();
+        });
+        
+        document.addEventListener('keyup', e => {
+            keys[e.key.toLowerCase()] = false;
+            e.preventDefault();
+        });
+        
+        let mouseMovement = 0;
+        document.addEventListener('mousemove', e => {
+            if (document.pointerLockElement === canvas) {
+                mouseMovement += e.movementX;
+            }
+        });
+        
+        canvas.addEventListener('click', () => {
+            canvas.requestPointerLock();
+        });
+        
+        // ========================================
+        // COLLISION DETECTION
+        // ========================================
+        
+        function checkCollision(x, y, radius = 0.2) {
+            // Check all four corners of the player's bounding box
+            const corners = [
+                {x: x - radius, y: y - radius},
+                {x: x + radius, y: y - radius},
+                {x: x - radius, y: y + radius},
+                {x: x + radius, y: y + radius}
+            ];
+            
+            for (let corner of corners) {
+                const mapX = Math.floor(corner.x);
+                const mapY = Math.floor(corner.y);
+                
+                if (mapX < 0 || mapX >= MAP_WIDTH || 
+                    mapY < 0 || mapY >= MAP_HEIGHT || 
+                    map[mapY][mapX] === 1) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        
+        // ========================================
+        // DDA RAYCASTING ALGORITHM
+        // ========================================
+        
+        function castRay(rayAngle) {
+            // Ray direction
+            const rayDirX = Math.cos(rayAngle);
+            const rayDirY = Math.sin(rayAngle);
+            
+            // Current grid position
+            let mapX = Math.floor(player.x);
+            let mapY = Math.floor(player.y);
+            
+            // Calculate ray length from one grid line to next
+            const deltaDistX = Math.abs(1 / rayDirX);
+            const deltaDistY = Math.abs(1 / rayDirY);
+            
+            let perpWallDist;
+            let stepX, stepY;
+            let sideDistX, sideDistY;
+            
+            // Calculate step and initial sideDist
+            if (rayDirX < 0) {
+                stepX = -1;
+                sideDistX = (player.x - mapX) * deltaDistX;
+            } else {
+                stepX = 1;
+                sideDistX = (mapX + 1.0 - player.x) * deltaDistX;
+            }
+            
+            if (rayDirY < 0) {
+                stepY = -1;
+                sideDistY = (player.y - mapY) * deltaDistY;
+            } else {
+                stepY = 1;
+                sideDistY = (mapY + 1.0 - player.y) * deltaDistY;
+            }
+            
+            // Perform DDA
+            let hit = false;
+            let side; // NS or EW wall?
+            let distance = 0;
+            
+            while (!hit && distance < MAX_DEPTH) {
+                // Jump to next map square, either in x or y direction
+                if (sideDistX < sideDistY) {
+                    sideDistX += deltaDistX;
+                    mapX += stepX;
+                    side = 0; // Vertical wall
+                } else {
+                    sideDistY += deltaDistY;
+                    mapY += stepY;
+                    side = 1; // Horizontal wall
+                }
+                
+                // Check if ray has hit a wall
+                if (mapX >= 0 && mapX < MAP_WIDTH && mapY >= 0 && mapY < MAP_HEIGHT) {
+                    if (map[mapY][mapX] === 1) {
+                        hit = true;
+                    }
+                } else {
+                    break; // Out of bounds
+                }
+                
+                distance++;
+            }
+            
+            if (!hit) return null;
+            
+            // Calculate perpendicular distance (remove fish-eye effect)
+            if (side === 0) {
+                perpWallDist = (mapX - player.x + (1 - stepX) / 2) / rayDirX;
+            } else {
+                perpWallDist = (mapY - player.y + (1 - stepY) / 2) / rayDirY;
+            }
+            
+            // Calculate exact wall hit position for texture mapping
+            let wallX;
+            if (side === 0) {
+                wallX = player.y + perpWallDist * rayDirY;
+            } else {
+                wallX = player.x + perpWallDist * rayDirX;
+            }
+            wallX -= Math.floor(wallX);
+            
+            return {
+                distance: Math.abs(perpWallDist),
+                wallX: wallX,
+                side: side
+            };
+        }
+        
+        // ========================================
+        // UPDATE FUNCTIONS
+        // ========================================
+        
+        function updatePlayer() {
+            if (!gameRunning) return;
+            
+            // Rotation
+            if (keys['arrowleft']) player.angle -= player.rotSpeed;
+            if (keys['arrowright']) player.angle += player.rotSpeed;
+            
+            // Mouse rotation
+            player.angle += mouseMovement * 0.002;
+            mouseMovement = 0;
+            
+            // Movement
+            let moveX = 0;
+            let moveY = 0;
+            
+            if (keys['w'] || keys['arrowup']) {
+                moveX = Math.cos(player.angle) * player.moveSpeed;
+                moveY = Math.sin(player.angle) * player.moveSpeed;
+            }
+            if (keys['s'] || keys['arrowdown']) {
+                moveX = -Math.cos(player.angle) * player.moveSpeed;
+                moveY = -Math.sin(player.angle) * player.moveSpeed;
+            }
+            if (keys['a']) {
+                moveX = Math.cos(player.angle - Math.PI/2) * player.moveSpeed;
+                moveY = Math.sin(player.angle - Math.PI/2) * player.moveSpeed;
+            }
+            if (keys['d']) {
+                moveX = Math.cos(player.angle + Math.PI/2) * player.moveSpeed;
+                moveY = Math.sin(player.angle + Math.PI/2) * player.moveSpeed;
+            }
+            
+            // Apply movement with collision detection
+            if (!checkCollision(player.x + moveX, player.y, player.radius)) {
+                player.x += moveX;
+            }
+            if (!checkCollision(player.x, player.y + moveY, player.radius)) {
+                player.y += moveY;
+            }
+        }
+        
+        function updateStalker() {
+            if (!gameRunning) return;
+            
+            // Calculate direction to player
+            const dx = player.x - stalker.x;
+            const dy = player.y - stalker.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            // Check for game over
+            if (dist < 0.3) {
+                gameRunning = false;
+                document.getElementById('gameOver').style.display = 'block';
+                return;
+            }
+            
+            // Move towards player
+            if (dist > 0) {
+                const moveX = (dx / dist) * stalker.speed;
+                const moveY = (dy / dist) * stalker.speed;
+                
+                // Simple collision check for stalker
+                if (!checkCollision(stalker.x + moveX, stalker.y, 0.2)) {
+                    stalker.x += moveX;
+                }
+                if (!checkCollision(stalker.x, stalker.y + moveY, 0.2)) {
+                    stalker.y += moveY;
+                }
+            }
+            
+            // Update eye glow
+            stalker.eyeGlow += 0.02 * stalker.glowDir;
+            if (stalker.eyeGlow > 1 || stalker.eyeGlow < 0.3) {
+                stalker.glowDir *= -1;
+            }
+            
+            // Update HUD
+            const dangerElement = document.getElementById('danger');
+            const distElement = document.getElementById('distance');
+            distElement.textContent = dist.toFixed(1);
+            
+            if (dist < 2) {
+                dangerElement.textContent = 'EXTREME';
+                dangerElement.style.color = '#ff0000';
+                dangerElement.style.textShadow = '0 0 10px #ff0000';
+            } else if (dist < 4) {
+                dangerElement.textContent = 'HIGH';
+                dangerElement.style.color = '#ff4400';
+            } else if (dist < 6) {
+                dangerElement.textContent = 'MEDIUM';
+                dangerElement.style.color = '#ff8800';
+            } else {
+                dangerElement.textContent = 'LOW';
+                dangerElement.style.color = '#ffaa00';
+            }
+        }
+        
+        // ========================================
+        // RENDERING
+        // ========================================
+        
+        function render() {
+            // Clear screen - dark ceiling
+            ctx.fillStyle = '#0a0a0a';
+            ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT / 2);
+            
+            // Floor
+            ctx.fillStyle = '#050505';
+            ctx.fillRect(0, SCREEN_HEIGHT / 2, SCREEN_WIDTH, SCREEN_HEIGHT / 2);
+            
+            // Store depth buffer for sprite rendering
+            const zBuffer = [];
+            
+            // Cast rays and draw walls
+            for (let x = 0; x < NUM_RAYS; x++) {
+                // Calculate ray angle
+                const rayAngle = (player.angle - FOV / 2) + (x / NUM_RAYS) * FOV;
+                
+                const ray = castRay(rayAngle);
+                if (!ray) {
+                    zBuffer[x] = MAX_DEPTH;
+                    continue;
+                }
+                
+                zBuffer[x] = ray.distance;
+                
+                // Calculate wall height on screen
+                const lineHeight = (SCREEN_HEIGHT / ray.distance);
+                
+                // Calculate lowest and highest pixel to draw
+                const drawStart = -lineHeight / 2 + SCREEN_HEIGHT / 2;
+                const drawEnd = lineHeight / 2 + SCREEN_HEIGHT / 2;
+                
+                // Texture coordinates
+                const texX = Math.floor(ray.wallX * wallTexture.width);
+                
+                // Draw the wall strip
+                ctx.drawImage(
+                    wallTexture,
+                    texX, 0, 1, wallTexture.height,
+                    x * STRIP_WIDTH, drawStart, STRIP_WIDTH, lineHeight
+                );
+                
+                // Apply darkness based on distance and side
+                const darkness = Math.min(ray.distance / 10, 0.8);
+                const sideDarkness = ray.side === 1 ? 0.1 : 0; // Make horizontal walls slightly darker
+                ctx.fillStyle = `rgba(0, 0, 0, ${darkness + sideDarkness})`;
+                ctx.fillRect(x * STRIP_WIDTH, drawStart, STRIP_WIDTH, lineHeight);
+            }
+            
+            // Render stalker
+            renderStalker(zBuffer);
+            
+            // Add overall fog effect
+            const gradient = ctx.createRadialGradient(
+                SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, 0,
+                SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, SCREEN_WIDTH / 1.5
+            );
+            gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+            gradient.addColorStop(0.7, 'rgba(0, 0, 0, 0.2)');
+            gradient.addColorStop(1, 'rgba(0, 0, 0, 0.5)');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+        }
+        
+        function renderStalker(zBuffer) {
+            // Calculate relative position
+            const dx = stalker.x - player.x;
+            const dy = stalker.y - player.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            // Calculate angle to stalker
+            let spriteAngle = Math.atan2(dy, dx) - player.angle;
+            
+            // Normalize angle
+            while (spriteAngle > Math.PI) spriteAngle -= 2 * Math.PI;
+            while (spriteAngle < -Math.PI) spriteAngle += 2 * Math.PI;
+            
+            // Check if in FOV
+            if (Math.abs(spriteAngle) > FOV / 2) return;
+            
+            // Calculate screen position
+            const spriteScreenX = (1 + spriteAngle / (FOV / 2)) * (SCREEN_WIDTH / 2);
+            
+            // Calculate size
+            const spriteHeight = SCREEN_HEIGHT / distance;
+            const spriteWidth = spriteHeight / 2;
+            
+            // Check if behind wall (using center ray)
+            const spriteCenterRay = Math.floor(spriteScreenX / STRIP_WIDTH);
+            if (spriteCenterRay >= 0 && spriteCenterRay < NUM_RAYS && distance > zBuffer[spriteCenterRay]) {
+                return; // Behind wall
+            }
+            
+            // Draw sprite
+            const drawStartY = (SCREEN_HEIGHT - spriteHeight) / 2;
+            const drawStartX = spriteScreenX - spriteWidth / 2;
+            
+            // Draw body
+            ctx.globalAlpha = Math.max(0.5, 1 - distance / MAX_DEPTH);
+            ctx.drawImage(stalkerSprite, drawStartX, drawStartY, spriteWidth, spriteHeight);
+            
+            // Draw glowing eyes
+            const eyeY = drawStartY + spriteHeight * 0.25;
+            const eyeSize = spriteHeight * 0.03;
+            const eyeSpacing = spriteWidth * 0.15;
+            
+            // Eye glow effect
+            for (let i = 3; i > 0; i--) {
+                const glowSize = eyeSize * i * (1 + stalker.eyeGlow);
+                const alpha = (stalker.eyeGlow * 0.5) / i;
+                
+                ctx.fillStyle = `rgba(255, ${100 - i * 20}, 0, ${alpha})`;
+                
+                // Left eye glow
+                ctx.beginPath();
+                ctx.arc(spriteScreenX - eyeSpacing, eyeY, glowSize, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Right eye glow
+                ctx.beginPath();
+                ctx.arc(spriteScreenX + eyeSpacing, eyeY, glowSize, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // Eye cores (bright centers)
+            ctx.fillStyle = `rgba(255, 200, 0, ${stalker.eyeGlow})`;
+            ctx.beginPath();
+            ctx.arc(spriteScreenX - eyeSpacing, eyeY, eyeSize, 0, Math.PI * 2);
+            ctx.arc(spriteScreenX + eyeSpacing, eyeY, eyeSize, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.globalAlpha = 1;
+        }
+        
+        // ========================================
+        // GAME LOOP
+        // ========================================
+        
+        function gameLoop() {
+            updatePlayer();
+            updateStalker();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // ========================================
+        // INITIALIZATION
+        // ========================================
+        
+        function init() {
+            console.log('The Labyrinth Stalker - Initialized');
+            console.log('Using DDA Raycasting Algorithm');
+            console.log('Map Size:', MAP_WIDTH + 'x' + MAP_HEIGHT);
+            gameLoop();
+        }
+        
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
